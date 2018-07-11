@@ -1,0 +1,5 @@
+= Ingestbeat Docs
+
+Welcome to the Ingestbeat documentation.
+
+
