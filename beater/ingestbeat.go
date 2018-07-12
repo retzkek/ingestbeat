@@ -42,8 +42,12 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 func (bt *Ingestbeat) Run(b *beat.Beat) error {
 	r := mux.NewRouter()
 	http.Handle("/", bt.loggingHandler(r))
-	r.PathPrefix("/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
 	r.Path("/").Methods("GET").HandlerFunc(bt.pingHandler)
+	r.Path("/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
+	r.Path("/{index}/{type}").Methods("POST").HandlerFunc(bt.indexHandler)
+	r.Path("/{index}/{type}/").Methods("POST").HandlerFunc(bt.indexHandler)
+	r.Path("/{index}/{type}/{id}").Methods("PUT").HandlerFunc(bt.indexHandler)
+
 	go http.ListenAndServe(bt.config.Address, nil)
 
 	bt.logger.Infof("listening on %s", bt.config.Address)
@@ -137,69 +141,144 @@ func originAddr(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
-	type action map[string]common.MapStr
-	scanner := bufio.NewScanner(r.Body)
-	nextIsAction := true
-	var act action
-	for scanner.Scan() {
-		if nextIsAction {
-			if err := json.Unmarshal(scanner.Bytes(), &act); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		} else {
-			if m, ok := act["index"]; ok {
-				m["origin"] = originAddr(r)
-				event := beat.Event{
-					Timestamp: time.Now(),
-					Meta:      m,
-				}
-				if err := json.Unmarshal(scanner.Bytes(), &event.Fields); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				bt.client.Publish(event)
-			} else if _, ok := act["create"]; ok {
-				http.Error(w, "create not implemented", http.StatusNotImplemented)
-				return
+type indexResponse struct {
+	Index  string `json:"_index"`
+	Type   string `json:"_type"`
+	ID     string `json:"_id"`
+	Result string `json:"result"`
+	Status int    `json:"status",omitempty`
+}
 
-			} else if _, ok := act["delete"]; ok {
-				http.Error(w, "delete not authorized", http.StatusUnauthorized)
-				return
-			} else if _, ok := act["update"]; ok {
-				http.Error(w, "update not implemented", http.StatusNotImplemented)
-				return
-			} else {
-				http.Error(w, fmt.Sprintf("unrecoginized action %v", act), http.StatusBadRequest)
-				return
-			}
-		}
-		nextIsAction = !nextIsAction
-
+func (bt *Ingestbeat) indexHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	event := beat.Event{
+		Timestamp: time.Now(),
+		Meta: common.MapStr{
+			"_index": vars["index"],
+			"_type":  vars["type"],
+			"_id":    vars["id"],
+		},
 	}
-	if err := scanner.Err(); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&event.Fields); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fmt.Fprint(w, "OK")
-}
+	bt.client.Publish(event)
+	w.WriteHeader(http.StatusCreated)
 
-type Document struct {
-	Index    string                 `json:"_index"`
-	Type     string                 `json:"_type"`
-	ID       string                 `json:"_id"`
-	Received string                 `json:"_received"`
-	Origin   string                 `json:"_origin"`
-	Data     map[string]interface{} `json:"data"`
-}
-
-func (d *Document) String() string {
-	b, err := json.Marshal(d)
-	if err != nil {
-		return fmt.Sprintf("Index:%s, Type:%s, ID:%s", d.Index, d.Type, d.ID)
+	resp := indexResponse{
+		Index:  vars["index"],
+		Type:   vars["type"],
+		ID:     vars["id"],
+		Result: "created",
 	}
-	return string(b)
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(resp); err != nil {
+		bt.logger.Errorf("error encoding response: %s", err.Error())
+		fmt.Fprint(w, "created")
+	}
+}
+
+type bulkItemResponse map[string]indexResponse
+type bulkResponse struct {
+	Took   int64              `json:"took"`
+	Errors bool               `json:"errors"`
+	Items  []bulkItemResponse `json:"items"`
+}
+
+func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	resp := bulkResponse{
+		Items: make([]bulkItemResponse, 0, 100),
+	}
+	scanner := bufio.NewScanner(r.Body)
+	for scanner.Scan() {
+		var act map[string]common.MapStr
+		if err := json.Unmarshal(scanner.Bytes(), &act); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		var action string
+		var m common.MapStr
+		var ok bool
+		for _, a := range []string{"index", "create", "delete", "update"} {
+			if m, ok = act[a]; ok {
+				action = a
+				break
+			}
+		}
+		iresp := indexResponse{
+			Index: coerceString(m["_index"]),
+			Type:  coerceString(m["_type"]),
+			ID:    coerceString(m["_id"]),
+		}
+		switch action {
+		case "index", "create":
+			m["origin"] = originAddr(r)
+			event := beat.Event{
+				Timestamp: time.Now(),
+				Meta:      m,
+			}
+			if !scanner.Scan() {
+				http.Error(w, fmt.Sprintf("%s action missing document", action), http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &event.Fields); err != nil {
+				resp.Errors = true
+				iresp.Result = err.Error()
+				iresp.Status = http.StatusBadRequest
+			}
+			bt.client.Publish(event)
+			iresp.Result = "created"
+			iresp.Status = http.StatusCreated
+		case "delete":
+			resp.Errors = true
+			iresp.Result = "unauthorized"
+			iresp.Status = http.StatusUnauthorized
+		case "update":
+			if !scanner.Scan() {
+				http.Error(w, fmt.Sprintf("%s action missing document", action), http.StatusBadRequest)
+				return
+			}
+			resp.Errors = true
+			iresp.Result = "not_implemented"
+			iresp.Status = http.StatusNotImplemented
+		default:
+			resp.Errors = true
+			iresp.Result = "unknown_action"
+			iresp.Status = http.StatusBadRequest
+		}
+		resp.Items = append(resp.Items, bulkItemResponse{action: iresp})
+	}
+
+	if err := scanner.Err(); err != nil {
+		resp.Errors = true
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp.Took = time.Since(start).Nanoseconds() / 1000000
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(resp); err != nil {
+		bt.logger.Errorf("error encoding response: %s", err.Error())
+		if resp.Errors {
+			http.Error(w, "error", http.StatusInternalServerError)
+		} else {
+			fmt.Fprint(w, "OK")
+		}
+	}
+
+}
+
+func coerceString(v interface{}) string {
+	switch v.(type) {
+	case string:
+		return v.(string)
+	case fmt.Stringer:
+		return v.(fmt.Stringer).String()
+	}
+	return ""
 }
 
 var pingResponse = `{
