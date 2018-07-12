@@ -146,7 +146,7 @@ type indexResponse struct {
 	Type   string `json:"_type"`
 	ID     string `json:"_id"`
 	Result string `json:"result"`
-	Status int    `json:"status",omitempty`
+	Status int    `json:"status,omitempty"`
 }
 
 func (bt *Ingestbeat) indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +161,7 @@ func (bt *Ingestbeat) indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&event.Fields); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		bt.handleError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	bt.client.Publish(event)
@@ -173,10 +173,10 @@ func (bt *Ingestbeat) indexHandler(w http.ResponseWriter, r *http.Request) {
 		ID:     vars["id"],
 		Result: "created",
 	}
+	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
 		bt.logger.Errorf("error encoding response: %s", err.Error())
-		fmt.Fprint(w, "created")
 	}
 }
 
@@ -196,7 +196,7 @@ func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 	for scanner.Scan() {
 		var act map[string]common.MapStr
 		if err := json.Unmarshal(scanner.Bytes(), &act); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			bt.handleError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -222,7 +222,7 @@ func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 				Meta:      m,
 			}
 			if !scanner.Scan() {
-				http.Error(w, fmt.Sprintf("%s action missing document", action), http.StatusBadRequest)
+				bt.handleError(w, "document missing", http.StatusBadRequest)
 				return
 			}
 			if err := json.Unmarshal(scanner.Bytes(), &event.Fields); err != nil {
@@ -239,7 +239,7 @@ func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 			iresp.Status = http.StatusUnauthorized
 		case "update":
 			if !scanner.Scan() {
-				http.Error(w, fmt.Sprintf("%s action missing document", action), http.StatusBadRequest)
+				bt.handleError(w, "document missing", http.StatusBadRequest)
 				return
 			}
 			resp.Errors = true
@@ -255,20 +255,15 @@ func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := scanner.Err(); err != nil {
 		resp.Errors = true
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		bt.handleError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	resp.Took = time.Since(start).Nanoseconds() / 1000000
+	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
 		bt.logger.Errorf("error encoding response: %s", err.Error())
-		if resp.Errors {
-			http.Error(w, "error", http.StatusInternalServerError)
-		} else {
-			fmt.Fprint(w, "OK")
-		}
 	}
-
 }
 
 func coerceString(v interface{}) string {
@@ -281,7 +276,8 @@ func coerceString(v interface{}) string {
 	return ""
 }
 
-var pingResponse = `{
+func (bt *Ingestbeat) pingHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, `{
   "name" : "ingestbeat",
   "cluster_name" : "ingestbeat",
   "cluster_uuid" : "45SieFHisfD5SAS",
@@ -293,8 +289,12 @@ var pingResponse = `{
     "lucene_version" : "6.6.1"
   },
   "tagline" : "You Know, for Search"
-}`
+}`)
+}
 
-func (bt *Ingestbeat) pingHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, pingResponse)
+func (bt *Ingestbeat) handleError(w http.ResponseWriter, reason string, statusCode int) {
+	errTpl := `{"error":{"type":"ingestbeat_error","reason":"%s"},"status":%d}`
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	fmt.Fprintf(w, errTpl, reason, statusCode)
 }
