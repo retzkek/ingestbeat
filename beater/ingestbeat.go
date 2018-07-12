@@ -44,6 +44,8 @@ func (bt *Ingestbeat) Run(b *beat.Beat) error {
 	http.Handle("/", bt.loggingHandler(r))
 	r.Path("/").Methods("GET").HandlerFunc(bt.pingHandler)
 	r.Path("/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
+	r.Path("/{index}/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
+	r.Path("/{index}/{type}/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
 	r.Path("/{index}/{type}").Methods("POST").HandlerFunc(bt.indexHandler)
 	r.Path("/{index}/{type}/").Methods("POST").HandlerFunc(bt.indexHandler)
 	r.Path("/{index}/{type}/{id}").Methods("PUT").HandlerFunc(bt.indexHandler)
@@ -165,6 +167,7 @@ func (bt *Ingestbeat) indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bt.client.Publish(event)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
 	resp := indexResponse{
@@ -173,7 +176,6 @@ func (bt *Ingestbeat) indexHandler(w http.ResponseWriter, r *http.Request) {
 		ID:     vars["id"],
 		Result: "created",
 	}
-	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
 		bt.logger.Errorf("error encoding response: %s", err.Error())
@@ -189,6 +191,7 @@ type bulkResponse struct {
 
 func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	vars := mux.Vars(r)
 	resp := bulkResponse{
 		Items: make([]bulkItemResponse, 0, 100),
 	}
@@ -202,12 +205,18 @@ func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 
 		var action string
 		var m common.MapStr
-		var ok bool
 		for _, a := range []string{"index", "create", "delete", "update"} {
+			var ok bool
 			if m, ok = act[a]; ok {
 				action = a
 				break
 			}
+		}
+		if i, ok := vars["index"]; ok && coerceString(m["_index"]) == "" {
+			m["_index"] = i
+		}
+		if t, ok := vars["type"]; ok && coerceString(m["_type"]) == "" {
+			m["_type"] = t
 		}
 		iresp := indexResponse{
 			Index: coerceString(m["_index"]),
@@ -259,6 +268,7 @@ func (bt *Ingestbeat) bulkHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Took = time.Since(start).Nanoseconds() / 1000000
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
