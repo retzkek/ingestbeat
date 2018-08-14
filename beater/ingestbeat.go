@@ -43,12 +43,16 @@ func (bt *Ingestbeat) Run(b *beat.Beat) error {
 	r := mux.NewRouter()
 	http.Handle("/", bt.loggingHandler(r))
 	r.Path("/").Methods("GET").HandlerFunc(bt.pingHandler)
+	r.Path("/").Methods("HEAD").HandlerFunc(bt.headHandler)
 	r.Path("/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
+	r.Path("/{index}").Methods("HEAD").HandlerFunc(bt.headHandler)
 	r.Path("/{index}/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
 	r.Path("/{index}/{type}/_bulk").Methods("GET", "POST").HandlerFunc(bt.bulkHandler)
+	r.Path("/{index}/{type}").Methods("HEAD").HandlerFunc(bt.headHandler)
 	r.Path("/{index}/{type}").Methods("POST").HandlerFunc(bt.indexHandler)
 	r.Path("/{index}/{type}/").Methods("POST").HandlerFunc(bt.indexHandler)
 	r.Path("/{index}/{type}/{id}").Methods("PUT").HandlerFunc(bt.indexHandler)
+	r.Path("/{index}/_mapping/{type}").Methods("HEAD").HandlerFunc(bt.headHandler)
 
 	go http.ListenAndServe(bt.config.Address, nil)
 
@@ -300,6 +304,10 @@ func (bt *Ingestbeat) pingHandler(w http.ResponseWriter, r *http.Request) {
   },
   "tagline" : "You Know, for Search"
 }`)
+}
+
+func (bt *Ingestbeat) headHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 func (bt *Ingestbeat) handleError(w http.ResponseWriter, reason string, statusCode int) {
