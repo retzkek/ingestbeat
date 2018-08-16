@@ -53,6 +53,7 @@ func (bt *Ingestbeat) Run(b *beat.Beat) error {
 	r.Path("/{index}/{type}/").Methods("POST").HandlerFunc(bt.indexHandler)
 	r.Path("/{index}/{type}/{id}").Methods("PUT").HandlerFunc(bt.indexHandler)
 	r.Path("/{index}/_mapping/{type}").Methods("HEAD").HandlerFunc(bt.headHandler)
+	r.Path("/_xpack").Methods("GET").HandlerFunc(bt.xpackHandler)
 
 	go http.ListenAndServe(bt.config.Address, nil)
 
@@ -308,6 +309,21 @@ func (bt *Ingestbeat) pingHandler(w http.ResponseWriter, r *http.Request) {
 
 func (bt *Ingestbeat) headHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+func (bt *Ingestbeat) xpackHandler(w http.ResponseWriter, r *http.Request) {
+	// yes, of course x-pack is enabled!
+	// (this lets us receive monitoring from beats)
+	fmt.Fprintf(w, `{
+  "features": {
+    "monitoring" : {
+      "description" : "Monitoring for the Elastic Stack",
+      "available" : true,
+      "enabled" : true
+    }
+  },
+  "tagline" : "You know, for X"
+}`)
 }
 
 func (bt *Ingestbeat) handleError(w http.ResponseWriter, reason string, statusCode int) {
