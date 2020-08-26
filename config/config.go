@@ -3,12 +3,10 @@
 
 package config
 
-import "time"
-
 type Config struct {
-	Period time.Duration `config:"period"`
+	Address string `config:"address"`
 }
 
 var DefaultConfig = Config{
-	Period: 1 * time.Second,
+	Address: "localhost:19200",
 }

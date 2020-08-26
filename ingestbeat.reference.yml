@@ -3,8 +3,8 @@
 ############################# {Beat} ######################################
 
 ingestbeat:
-  # Defines how often an event is sent to the output
-  period: 1s
+  # address to listen on
+  address: localhost:19200
 
 # ================================== General ===================================
 

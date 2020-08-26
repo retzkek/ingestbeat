@@ -1,5 +1,5 @@
 ingestbeat:
-  period: 1s
+  address: localhost:19200
 
 processors:
   - add_cloud_metadata: ~
