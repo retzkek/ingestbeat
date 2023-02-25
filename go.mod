@@ -19,9 +19,7 @@ replace (
 )
 
 require (
-	github.com/Sirupsen/logrus v1.0.1-0.20170608221441-85b1699d5056 // indirect
 	github.com/akavel/rsrc v0.9.0 // indirect
-	github.com/antlr/antlr4 v0.0.0-20200326173327-a4c66dc863bb // indirect
 	github.com/dlclark/regexp2 v1.2.1 // indirect
 	github.com/dop251/goja v0.0.0-20200824171909-536f9d946569 // indirect
 	github.com/dop251/goja_nodejs v0.0.0-20200811150831-9bc458b4bbeb // indirect
@@ -44,12 +42,9 @@ require (
 	go.elastic.co/ecszap v0.2.0 // indirect
 	go.elastic.co/fastjson v1.1.0 // indirect
 	go.uber.org/zap v1.15.0 // indirect
-	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a // indirect
+	golang.org/x/crypto v0.1.0 // indirect
 	golang.org/x/lint v0.0.0-20200302205851-738671d3881b
-	golang.org/x/net v0.0.0-20200822124328-c89045814202 // indirect
-	golang.org/x/sys v0.0.0-20200824131525-c12d262b63d8 // indirect
-	golang.org/x/text v0.3.3 // indirect
-	golang.org/x/tools v0.0.0-20200826040757-bc8aaaa29e06
+	golang.org/x/tools v0.1.12
 	honnef.co/go/tools v0.0.1-2020.1.5 // indirect
 	howett.net/plist v0.0.0-20200419221736-3b63eb3a43b5 // indirect
 )
